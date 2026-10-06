@@ -2,11 +2,11 @@
 
 **Open infrastructure for AI-assisted research, starting with an interactive proposal, critique, and revision loop.**
 
-[GitHub repository](https://github.com/Lawson-Dong/ideas-debate) · [Lawson Dong's personal website](https://lawson-dong.vercel.app/)
+[GitHub repository](https://github.com/Lawson-Dong/DeepResearch) · [Lawson Dong's personal website](https://lawson-dong.vercel.app/)
 
 DeepResearch is an open-source command-line prototype powered by DeepSeek. Three prompted roles help turn a raw research idea into a small, feasible proposal: an undergraduate **PROPOSER**, a professor **CRITIC**, and an **EVALUATOR** that adjusts the critic's rigor for the next round.
 
-The user can review each revision, add instructions, and decide when to stop. These roles are separate calls to the same model. The repository currently lives at `Lawson-Dong/ideas-debate`; **DeepResearch** is the project's display name.
+The user can review each revision, add instructions, and decide when to stop. These roles are separate calls to the same model.
 
 ## Motivation
 
@@ -64,8 +64,8 @@ The arXiv search currently keeps papers categorized under `cs.CV`, `cs.LG`, `cs.
 Use Python **3.10 or later**, an internet connection, and a DeepSeek API key.
 
 ```bash
-git clone https://github.com/Lawson-Dong/ideas-debate.git
-cd ideas-debate
+git clone https://github.com/Lawson-Dong/DeepResearch.git
+cd DeepResearch
 python -m venv .venv
 ```
 

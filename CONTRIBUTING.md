@@ -22,4 +22,4 @@ DeepResearch currently implements proposal refinement, literature retrieval, cri
 
 Good starting points include response schema validation, mocked integration tests, session recovery, retrieval quality, and configurable providers. Larger contributions can explore explicit experiment specifications, controlled execution, baselines, and artifact tracking. Describe the scope and expected behavior before introducing major infrastructure changes.
 
-Project: [DeepResearch](https://github.com/Lawson-Dong/ideas-debate). Maintainer: [Lawson Dong](https://lawson-dong.vercel.app/).
+Project: [DeepResearch](https://github.com/Lawson-Dong/DeepResearch). Maintainer: [Lawson Dong](https://lawson-dong.vercel.app/).
