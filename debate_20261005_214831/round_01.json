@@ -1,0 +1,120 @@
+{
+  "round": 1,
+  "defense_level": 0.3,
+  "strictness_used": 0.4,
+  "next_strictness": 0.35,
+  "evaluation": {
+    "completeness_score": 0.85,
+    "suggested_critic_strictness": 0.35,
+    "reasoning": "The revised proposal is logically coherent, methodologically sound for a small undergraduate project, and honestly scoped, with the main remaining issues being the one-sided vs two-sided choice and the low permutation resolution for ResNet-18, so constructive guidance at moderate strictness is appropriate."
+  },
+  "arxiv_context": "[Search failed for 'representational geometry CNN depth': Page request resulted in HTTP 429 (https://export.arxiv.org/api/query?search_query=representational+geometry+CNN+depth&id_list=&sortBy=relevance&sortOrder=descending&start=0&max_results=100)]\n\n---\n\n[Search failed for 'block-wise CKA representation similarity': Page request resulted in HTTP 429 (https://export.arxiv.org/api/query?search_query=block-wise+CKA+representation+similarity&id_list=&sortBy=relevance&sortOrder=descending&start=0&max_results=100)]\n\n---\n\n[Search failed for 'cat dog binary classification probe': Page request resulted in HTTP 429 (https://export.arxiv.org/api/query?search_query=cat+dog+binary+classification+probe&id_list=&sortBy=relevance&sortOrder=descending&start=0&max_results=100)]",
+  "repo_context_length": 20244,
+  "critique": {
+    "round": 1,
+    "verdict": "on_track",
+    "encouragement": "You did something most first-time researchers skip: you read the notebook's own caveats (markdown cell 16) and built your plan around them — e.g., you explicitly refuse to pool ResNet-18 and ConvNeXt-Tiny, and you flag that Fisher and S are correlated. That is exactly the habit of a careful researcher, and it makes your proposal much easier to trust.",
+    "main_issues": [
+      {
+        "issue": "Your main question ('does S jump at boundaries vs within stages?') is currently too close to just re-describing the notebook's own plot. The notebook already computes delta_S grouped by boundary in code cell 17 and prints the largest positive S increments. So as written, your study would mostly reproduce an existing table.",
+        "why_it_matters": "A research question needs a possible answer that would surprise you. If the notebook already shows the answer, there is nothing to test — you would be writing a summary, not a study.",
+        "how_to_fix": "Add a comparison that the notebook does NOT make. The simplest one: compare delta_S at boundaries against a 'null' baseline built by relabeling steps at random (a permutation test — see below). Then your claim becomes 'boundary steps have larger delta_S than chance,' which is a real, falsifiable statement. Keep the notebook's descriptive table as a sanity check, not as your result."
+      },
+      {
+        "issue": "Your statistics plan (Mann-Whitney U on delta_S at boundary vs within-stage steps) treats the steps as if they were independent samples. They are not: within one model, all steps share the same 200 images and the same network, so the delta_S values are strongly tied to each other. A p-value from Mann-Whitney U would be too small and would overstate your evidence.",
+        "why_it_matters": "You already sensed this — good instinct. If you report a p-value that assumes independence when it is false, a careful reader will (rightly) not believe your result.",
+        "how_to_fix": "Use a permutation test that respects the structure. Concretely: (1) take the list of step positions in a model (e.g., 1..8 for ResNet-18); (2) randomly choose the same NUMBER of positions as there are boundary steps; (3) compute the mean delta_S at those fake 'boundary' positions minus the mean at the rest; (4) repeat 1000 times to get a null distribution; (5) see where your real boundary-minus-within difference falls. This is ~15 lines of numpy and does not require scipy. Report the fraction of permutations that beat your real value (that is your p-value) and the median difference (your effect size)."
+      },
+      {
+        "issue": "You plan to run a second 200-image draw with a different seed as your robustness check. That is a good idea, but with only 200 images the second draw will overlap heavily with the first (same pool of cats/dogs), so it will not tell you much about whether your pattern is stable.",
+        "why_it_matters": "You want your conclusion to survive a real perturbation, not a cosmetic one. A near-identical resample can succeed by accident and give you false confidence.",
+        "how_to_fix": "Instead of (or in addition to) a second seed, do a bootstrap over the 200 images you already have: resample the 200 images with replacement many times, recompute S at each step, and see how much S varies. This uses the data you already extracted (no new GPU runs) and directly answers 'how noisy is S on this sample size?' If S swings wildly across bootstraps, that is itself an honest, publishable finding for a class project."
+      }
+    ],
+    "explanation_for_beginner": "Think of the permutation test like this. You have 8 steps in ResNet-18, and 4 of them are labeled 'boundary.' You compute the average jump in S at those 4 steps and it looks big. But maybe ANY 4 of the 8 steps would have looked big, just by luck of which steps happen to have large jumps. So you shuffle the labels — pick 4 random steps, call them 'boundary,' compute the same average, and repeat 1000 times. You now have 1000 'fake' averages. If your real average is bigger than, say, 980 of them, you can say 'this is unlikely to be an accident of which steps I called boundaries.' That is the whole idea, and it does not assume the steps are independent in the way Mann-Whitney U does.",
+    "suggested_reading": {
+      "paper": "Kornblith et al., 'Similarity of Neural Network Representations Revisited' (ICML 2019), arXiv:1905.00414",
+      "why_relevant": "The notebook already cites this for CKA; reading the paper will tell you exactly what CKA does and does not claim, which is directly relevant to your caveats section and to why 'a CKA dip is not a phase transition.'"
+    },
+    "alternative_directions": [
+      "Drop the boundary-vs-within framing entirely and instead ask: 'Does the linear probe accuracy at each block predict S at that block, and does that relationship differ between ResNet-18 and ConvNeXt-Tiny?' This is a cleaner two-variable question, easy to plot, and does not require the boundary labeling at all.",
+      "Keep the boundary framing but make it qualitative: produce one figure per model showing S with boundary steps marked, and write a short paragraph per model describing where the biggest jumps are. This is a legitimate descriptive study and is very achievable in 2 weeks."
+    ],
+    "acknowledged_improvements": [
+      "You scoped down from four networks to two (ResNet-18 and ConvNeXt-Tiny), which is the right call for a first project and matches what the notebook can actually run quickly.",
+      "You explicitly refuse to pool the two architectures, respecting the notebook's own caveat in markdown cell 16.",
+      "You flagged the independence problem with Mann-Whitney U before anyone told you — that is exactly the kind of self-critique a good researcher does."
+    ]
+  },
+  "before": {
+    "version": 1,
+    "title": "A small, reproducible check of block-wise representational geometry dynamics in ImageNet CNNs (ResNet-18 vs ConvNeXt-Tiny) on a 200-image cat/dog sample",
+    "problem": "The notebook computes many descriptive geometry metrics (adjacent CKA, within/between cosine distance, separation S, raw Fisher ratio, participation ratio, linear probe accuracy) across every block of four pretrained networks, but it never states a testable question or a decision rule. I want to turn it into a small study that asks one concrete question: when we look at the same 200 cat/dog images through each block of a pretrained network, does the relative separation between cat and dog representations (S) change smoothly with depth, or does it jump at specific architectural transitions (downsampling / stage boundaries)?",
+    "motivation": "If separation mostly jumps at a few transitions rather than rising smoothly, that tells us which parts of a network are 'doing the work' for this simple binary distinction, and it would make the notebook's descriptive plots into something a reader can actually check. I also want to see whether the same pattern shows up in two different architectures (a ResNet and a ConvNeXt), because the notebook currently plots them together without saying whether they should be comparable.",
+    "method": "Reuse the notebook's existing pipeline as-is for data and features: the ZipCatsDogs loader (code cell 2) with the fixed ResNet-18 transform, the 100-cats/100-dogs subset with SEED=42, and the observed_modules + extract_blocks hook functions (code cell 3). Scope down from four networks to two: ResNet-18 (9 measurement points) and ConvNeXt-Tiny (22 points), because those are the two smallest and I can actually run them. For each stage, compute the existing metrics from representation_stats (code cell 12): S, d_within_cos, d_between_cos, Fisher_raw, PR, plus adjacent CKA_prev and the 5-split linear probe. Then, instead of only plotting, I will: (1) label each measurement point as boundary vs within-stage using the existing boundaries list; (2) compute the per-step change delta_S = S[depth] - S[depth-1] within each model; (3) compare the distribution of delta_S at boundary steps vs within-stage steps using a simple rank-based test (Mann-Whitney U) and report effect size (median difference), not just a p-value; (4) repeat the whole thing with a second random 200-image draw (different seed) to see whether the boundary-vs-within pattern is stable. I am not sure whether Mann-Whitney U is the right choice here — the steps within a model are not independent (they share the same 200 images and the same network), so I would like guidance on whether a permutation test over image subsets would be more honest. I also do not know how to properly account for the fact that ResNet-18 and ConvNeXt-Tiny have different numbers of points and different feature widths; I plan to report them separately and NOT pool them, but I want to confirm that is the right call.",
+    "contributions": [
+      "A clear, falsifiable restatement of the notebook's descriptive geometry curves as a boundary-vs-within-stage question about delta_S.",
+      "A small stability check: does the boundary-vs-within pattern survive a change of the 200-image sample?",
+      "An honest comparison of two architectures reported side by side rather than overlaid as if depth were the same axis.",
+      "A short written caveats section that keeps the notebook's existing warnings (CKA dip is not a phase transition; PR is an estimator; probe SD is descriptive)."
+    ],
+    "feasibility": "Data: the Zenodo cats_dogs_light.zip already used in code cell 2, with the MD5 check. Compute: two small pretrained models (ResNet-18, ConvNeXt-Tiny) on 200 images, CPU is probably fine but a single Colab GPU makes it fast; I can reuse the notebook's extract_blocks and the per-model .npz export pattern (code cells 4, 8) so I do not re-run feature extraction when I change the analysis. Time: roughly 1 week to re-run extraction and write the analysis script, 1 week to do the second-seed check and write up. Code: mostly reusing existing functions; the only new code is the delta_S computation, the boundary-vs-within comparison, and a small plotting function. I do not need any new libraries beyond what the notebook already imports (numpy, pandas, scipy for the rank test — scipy is not currently imported, so I would add it).",
+    "risks": [
+      "The 200-image sample is small; a single different draw might flip the boundary-vs-within pattern, which is exactly why I want the second-seed check, but it may still be inconclusive.",
+      "delta_S steps within a model are not independent, so a naive Mann-Whitney U p-value would be misleading. I flagged this above and want guidance.",
+      "The notebook's own caveat (markdown cell 16) says cross-architecture curves are not a controlled depth-only comparison. I will respect that by reporting models separately, but a reader might still over-interpret the side-by-side plots.",
+      "Global average pooling at every hook discards spatial information, so 'separation' here is about pooled features only, not about spatial structure.",
+      "Fisher_raw and S are correlated (the notebook says so in markdown cell 16), so I should not treat them as independent evidence for the same claim."
+    ],
+    "questions_for_professor": [
+      "Is 'does S jump at boundaries vs within stages' a reasonable research question, or is it too close to just re-describing the plots?",
+      "For the boundary-vs-within comparison, is a Mann-Whitney U test acceptable, or should I use a permutation test that shuffles which steps are labeled 'boundary'? I do not know how to set up the permutation test correctly given that the steps come from one fixed network and one fixed image set.",
+      "How should I think about the fact that ResNet-18 has 9 points and ConvNeXt-Tiny has 22? Is reporting them separately enough, or is there a standard way to make them comparable?",
+      "Is a second random 200-image draw (different seed) a meaningful robustness check, or is it too weak to matter?",
+      "The notebook already has a lot of metrics. Should I pick one primary metric (S) and treat the rest as secondary, or is it fine to report all of them?"
+    ],
+    "response_to_critic": "",
+    "changelog": []
+  },
+  "after": {
+    "version": 2,
+    "title": "Do representational separation jumps at architectural boundaries exceed chance? A permutation-test study of block-wise geometry in ResNet-18 and ConvNeXt-Tiny on 200 cat/dog images",
+    "problem": "The notebook (code cell 17) already computes delta_S grouped by boundary vs within-stage and prints the largest positive S increments, so simply re-describing that table is not a study. The real question I want to ask is: are the per-step changes in relative separation S at architectural boundary steps (stage starts / downsampling transitions) LARGER than what you would expect by chance if you picked the same number of steps at random? And separately: how noisy is S itself on this 200-image sample? The notebook does not answer either of these.",
+    "motivation": "If boundary steps really do carry larger jumps in separation than random steps, that is a small, checkable claim about where a pretrained network changes its cat/dog geometry most. If they do not, then the notebook's boundary grouping is just a convenient label and the jumps are spread out — which is also worth knowing. Either way I get a real yes/no answer instead of a re-description of an existing plot.",
+    "method": "Data and features: reuse the notebook exactly — ZipCatsDogs loader (code cell 2), the fixed ResNet-18 transform, the 100-cat/100-dog subset with SEED=42, and observed_modules + extract_blocks (code cell 3). Scope to two models: ResNet-18 (9 points) and ConvNeXt-Tiny (22 points). Reuse representation_stats (code cell 12) for S, d_within_cos, d_between_cos, Fisher_raw, PR, and linear_cka for CKA_prev, and probe_scores for the 5-split probe. Primary metric: S. Everything else is secondary.\n\nAnalysis 1 — permutation test on boundary vs within (replaces Mann-Whitney U): For each model separately, take the ordered list of step positions 1..K-1 (where K is the number of measurement points). Let B = the set of positions whose stage label is in the notebook's boundaries list (excluding position 0, which has no previous step). Compute the real statistic T = mean(delta_S at positions in B) - mean(delta_S at positions not in B). Then repeat 1000 times: draw a random subset of positions of the same size as B (without replacement), recompute T, and store it. Report: (a) the real T, (b) the fraction of permutation Ts that are >= real T (one-sided p-value), (c) the median of the permutation Ts as a reference. This is ~15 lines of numpy and does not need scipy. I will do this separately for ResNet-18 and ConvNeXt-Tiny and NOT pool them, because the notebook's markdown cell 16 warns that cross-architecture depth is not comparable.\n\nAnalysis 2 — bootstrap noise of S (replaces the second-seed check): Using the already-extracted per-image features (no new GPU runs), resample the 200 image indices with replacement 500 times. For each bootstrap, recompute S at every stage, giving a distribution of S per stage. Report the per-stage standard deviation of S and plot S with a bootstrap band. This directly answers 'how noisy is S at n=200?' and is honest even if the answer is 'quite noisy.'\n\nI am unsure about one thing: whether the permutation test should be one-sided (boundaries have LARGER delta_S) or two-sided (boundaries have DIFFERENT delta_S). My guess is one-sided because the notebook's framing implies boundaries should matter more, but I would like guidance.",
+    "contributions": [
+      "A falsifiable claim the notebook does not currently make: boundary steps carry larger delta_S than random steps of the same count, tested by permutation, reported per model.",
+      "A bootstrap estimate of how noisy S is at n=200 per stage, which the notebook does not provide and which bounds how seriously any single-curve reading should be taken.",
+      "A clean separation of primary (S) and secondary metrics, so I do not double-count correlated evidence (the notebook itself notes Fisher and S are correlated in markdown cell 16).",
+      "A short caveats section that keeps the notebook's existing warnings and adds the two new ones (permutation is over step labels, not over images; bootstrap is over the 200 images only)."
+    ],
+    "feasibility": "Data: the same Zenodo cats_dogs_light.zip with MD5 check (code cell 2). Compute: ResNet-18 and ConvNeXt-Tiny on 200 images — one Colab GPU run each, and I can save the .npz exports exactly like code cells 4 and 8 so all analysis is CPU-only afterwards. The permutation test and bootstrap are pure numpy on arrays of shape (200, width) per stage, which is tiny. Time: a few days to re-run extraction and write the permutation + bootstrap code, a few days to make figures and write up. New dependency: none — I dropped the scipy plan since the permutation test is hand-written numpy.",
+    "risks": [
+      "With only 8 steps in ResNet-18 and 21 in ConvNeXt-Tiny, the permutation test has very few possible labelings — the smallest achievable p-value is limited (roughly 1 / C(K-1, |B|)). I will report the number of distinct permutations and say so honestly rather than pretending a small p-value is meaningful.",
+      "The bootstrap over 200 images only tells me about sampling noise in the images, not about noise from the network or the transform. I will say this explicitly.",
+      "If S turns out to be very noisy across bootstraps, the boundary-vs-within comparison may be underpowered. That is a real possible outcome and I will report it as a finding, not hide it.",
+      "The notebook's markdown cell 16 warns that cross-architecture curves are not a controlled depth-only comparison. I will keep the two models on separate panels and never pool their permutation results.",
+      "Global average pooling at every hook discards spatial information; 'separation' here means pooled features only.",
+      "Fisher_raw and S are correlated (markdown cell 16), so I will not treat them as independent confirmations of the same claim."
+    ],
+    "questions_for_professor": [
+      "Is the permutation test I described the right null? I am shuffling which STEP POSITIONS are called 'boundary' while keeping the same 200 images and the same network. Is that the null you meant, or should the permutation be over images instead?",
+      "Should the permutation test be one-sided (boundaries have larger delta_S) or two-sided? I lean one-sided because the notebook's framing implies boundaries matter more, but I am not confident.",
+      "With only 8 steps in ResNet-18, the permutation test can only produce a limited number of distinct values. Is it still worth reporting, or should I treat ResNet-18 as purely descriptive and only run the permutation on ConvNeXt-Tiny (21 steps)?",
+      "For the bootstrap, is 500 resamples enough, or should I use more? And is per-stage standard deviation of S the right summary, or should I report a confidence interval?",
+      "You suggested dropping the boundary framing entirely in favor of 'does probe accuracy predict S, and does that differ between models?' That is appealing but I am not sure I understand how to compare the two models' relationships without pooling them. Could you explain a simple version?",
+      "Should I still keep the notebook's existing boundary_summary table (code cell 17) in my write-up as a sanity check, or does that risk looking like I am just reproducing the notebook?"
+    ],
+    "response_to_critic": "Point 1 (question too close to re-describing the notebook's own plot): I understand, I will fix it. I am replacing the descriptive delta_S-by-boundary table as the result with a permutation test that asks whether boundary steps have larger delta_S than random steps of the same count. The notebook's table becomes a sanity check, not the finding.\n\nPoint 2 (Mann-Whitney U assumes independence, which is false here): I understand, I will fix it. I am dropping Mann-Whitney U entirely and using the permutation test you described — shuffle which step positions are labeled 'boundary,' recompute the boundary-minus-within mean delta_S, repeat 1000 times. I will report the fraction of permutations that beat the real value and the median difference. I also dropped scipy since the permutation test is hand-written numpy.\n\nPoint 3 (second-seed draw is too weak a robustness check): I understand, I will fix it. I am replacing the second-seed plan with a bootstrap over the 200 images I already have — resample with replacement 500 times, recompute S per stage, and report the per-stage spread. This uses the features I already extracted, so no extra GPU runs, and it directly answers 'how noisy is S at n=200?'\n\nOn the suggested reading (Kornblith et al. 2019, arXiv:1905.00414): I will read it. The notebook already cites it for CKA, and I want to make sure my caveats section says the right thing about what CKA does and does not claim.\n\nOn the alternative directions: the second one (qualitative per-model figure with boundary steps marked) I can fold in as a figure regardless of the statistical outcome. The first one (probe accuracy vs S as a two-variable question) I am interested in but do not fully understand how to compare across models without pooling — I have asked about it in questions_for_professor rather than committing to it now.",
+    "changelog": [
+      "Replaced the descriptive boundary-vs-within delta_S comparison as the main result with a permutation test over step positions (1000 shuffles), per model, reported as a fraction-beaten p-value plus median difference.",
+      "Dropped Mann-Whitney U and the scipy dependency; the permutation test is hand-written numpy.",
+      "Replaced the second-seed robustness check with a 500-sample bootstrap over the existing 200 images, recomputing S per stage and reporting per-stage spread.",
+      "Added an explicit note that ResNet-18 has only 8 steps, so the permutation test has limited resolution there — flagged as a risk and a question.",
+      "Named S as the primary metric and demoted Fisher_raw, PR, CKA_prev, and probe accuracy to secondary, to avoid double-counting correlated evidence.",
+      "Added a question about whether the permutation should be one-sided or two-sided.",
+      "Added a question about whether to keep the notebook's existing boundary_summary table as a sanity check or drop it."
+    ]
+  },
+  "user_feedback": null
+}

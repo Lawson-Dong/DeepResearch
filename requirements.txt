@@ -1,0 +1,5 @@
+# Direct dependency versions recorded in the supplied environment.
+arxiv==4.0.1
+openai==3.24.0
+python-dotenv==1.2.4
+requests==2.34.2
