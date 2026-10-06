@@ -1,8 +1,52 @@
-# Ideas Debate
+# DeepResearch
 
-A command-line research idea workshop powered by DeepSeek. Three prompted roles help turn a raw idea into a small, feasible proposal: an undergraduate **PROPOSER**, a professor **CRITIC**, and an **EVALUATOR** that adjusts the critic's rigor for the next round.
+**Open infrastructure for AI-assisted research, starting with an interactive proposal, critique, and revision loop.**
 
-The user can review each revision, add instructions, and decide when to stop. These roles are separate calls to the same model, rather than independently trained agents.
+[GitHub repository](https://github.com/Lawson-Dong/ideas-debate) · [Lawson Dong's personal website](https://lawson-dong.vercel.app/)
+
+DeepResearch is an open-source command-line prototype powered by DeepSeek. Three prompted roles help turn a raw research idea into a small, feasible proposal: an undergraduate **PROPOSER**, a professor **CRITIC**, and an **EVALUATOR** that adjusts the critic's rigor for the next round.
+
+The user can review each revision, add instructions, and decide when to stop. These roles are separate calls to the same model. The repository currently lives at `Lawson-Dong/ideas-debate`; **DeepResearch** is the project's display name.
+
+## Motivation
+
+Moving from an interesting idea to a testable research plan involves more than generating an answer. It requires finding related work, questioning assumptions, narrowing the scope, responding to criticism, and recording why a proposal changed.
+
+DeepResearch brings those steps into an explicit workflow that a researcher can inspect and steer. Its longer-term goal is to support end-to-end research agents: connecting proposal refinement to experiment design, execution, evaluation, and reproducible reporting. The current implementation covers the planning and revision stage.
+
+## Infrastructure and technical stack
+
+The infrastructure is a small Python orchestration layer around model calls, retrieval tools, human feedback, and JSON records. Prompts define the roles; Python controls their execution order, validates evaluator scores, updates critic strictness, and writes the logs.
+
+| Component | Implementation |
+| --- | --- |
+| Runtime and interface | Python 3.10+ and an interactive command-line interface. |
+| Model access | DeepSeek `deepseek-chat` through the OpenAI-compatible Python SDK. |
+| Literature retrieval | The `arxiv` package; generated search queries, category filtering, and deduplication. |
+| Code context | `requests` retrieves one public GitHub file; notebook markdown and code cells are extracted. |
+| Local configuration | `python-dotenv` loads the API key from a local environment file. |
+| Orchestration and records | Explicit role sequencing, adaptive critic rigor, human feedback, and per-round JSON logs. |
+
+## Implemented capabilities
+
+- Convert a research idea into a structured proposal with a method, feasibility assessment, risks, and questions.
+- Retrieve arXiv references for each revision round.
+- Ground proposal and critique prompts in a linked public script or notebook.
+- Run a proposer–critic–evaluator loop with configurable defense level and adaptive critic strictness.
+- Accept human instructions between rounds and support explicit finalization.
+- Record proposals before and after revision, critique, evaluation, reference context, and feedback.
+
+## Contributors wanted
+
+We welcome people interested in research agents, open-source infrastructure, and AI-assisted science. Useful next steps include:
+
+- **Experiment execution:** connect proposals to explicit experiment specifications and controlled Python execution.
+- **Evaluation and reproducibility:** introduce baselines, meaningful evaluation criteria, recorded configurations, and traceable experiment artifacts.
+- **Retrieval and evidence:** improve reference relevance, citation verification, and support for more research domains.
+- **Workflow reliability:** add complete response schemas, recovery, session resumption, and mocked integration tests.
+- **Developer experience:** improve configuration, model-provider support, and interfaces for reviewing revisions.
+
+These are contribution directions rather than completed features. Start by trying the current workflow, reporting a reproducible issue, or proposing a focused change. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## How it works
 
