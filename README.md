@@ -50,14 +50,14 @@ These are contribution directions rather than completed features. Start by tryin
 
 ## How it works
 
-1. Read your research idea and optionally fetch a public GitHub file linked in it.
-2. At the start of each round, derive up to three arXiv search queries locally from the idea or current proposal, then retrieve relevant papers.
-3. Call PROPOSER to create v0 in the first round or revise the previous version in later rounds.
+1. Read your research idea and optionally fetch the single public GitHub file linked in it.
+2. At the start of each round, derive up to three arXiv search queries locally from the idea (round 1) or current proposal (later rounds), then retrieve relevant papers.
+3. Call PROPOSER to create v0 in round 1 or revise the previous version in later rounds.
 4. Call CRITIC to review that proposal.
-5. Call EVALUATOR with the original idea, linked GitHub file, arXiv results, proposal, and critique. It scores the proposal and recommends the next round's proposer defense rate and critic strictness.
+5. Call EVALUATOR with the original idea, current proposal, CRITIC feedback, and the same GitHub and arXiv context. It scores the proposal and recommends the next round's PROPOSER defense rate and CRITIC strictness.
 6. Print the feedback and proposal, save a JSON round log, and wait for your input.
 
-Each round makes exactly three DeepSeek API calls in this order: PROPOSER, CRITIC, EVALUATOR. arXiv query generation is local and does not make an LLM call.
+All three agents receive the original idea and the available source context: the linked GitHub file and that round's arXiv results. Each round makes exactly three DeepSeek API calls, in this order: PROPOSER, CRITIC, EVALUATOR. arXiv query generation is local and does not make an LLM call.
 
 The arXiv search currently keeps papers categorized under `cs.CV`, `cs.LG`, `cs.AI`, or `cs.CL`, with up to two papers per query from a candidate pool of 15. Other research fields may need changes to this filter in `tools.py`.
 
@@ -134,7 +134,7 @@ Edit `config.py` to change the current settings:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `MODEL` | `deepseek-chat` | Model used for every role and search-query generation. |
+| `MODEL` | `deepseek-chat` | Model used for PROPOSER, CRITIC, and EVALUATOR. arXiv search queries are generated locally. |
 | `DEFENSE_LEVEL` | `0.3` | Initial PROPOSER defense rate. EVALUATOR recommends the rate for each following round. Intended range: 0–1. |
 | `CRITIC_STRICTNESS` | `0.4` | Initial critic rigor. EVALUATOR recommends subsequent values in 0–1. |
 | `GITHUB_REPO_URL` | A project directory URL | Legacy setting; currently unused. Put a supported file URL in the idea instead. |
