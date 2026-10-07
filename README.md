@@ -4,7 +4,7 @@
 
 [GitHub repository](https://github.com/Lawson-Dong/DeepResearch) · [Lawson Dong's personal website](https://lawson-dong.vercel.app/)
 
-DeepResearch is an open-source command-line prototype powered by DeepSeek. Three prompted roles help turn a raw research idea into a small, feasible proposal: an undergraduate **PROPOSER**, a professor **CRITIC**, and an **EVALUATOR** that adjusts the critic's rigor for the next round.
+DeepResearch is an open-source command-line prototype powered by DeepSeek. Three prompted roles help turn a raw research idea into a small, feasible proposal: an undergraduate **PROPOSER**, a professor **CRITIC**, and an **EVALUATOR** that adjusts the proposer's defense rate and the critic's rigor for the next round.
 
 The user can review each revision, add instructions, and decide when to stop. These roles are separate calls to the same model.
 
@@ -16,23 +16,23 @@ DeepResearch brings those steps into an explicit workflow that a researcher can 
 
 ## Infrastructure and technical stack
 
-The infrastructure is a small Python orchestration layer around model calls, retrieval tools, human feedback, and JSON records. Prompts define the roles; Python controls their execution order, validates evaluator scores, updates critic strictness, and writes the logs.
+The infrastructure is a small Python orchestration layer around model calls, retrieval tools, human feedback, and JSON records. Prompts define the roles; Python controls their execution order, validates evaluator scores, updates both adaptive behavior settings, and writes the logs.
 
 | Component | Implementation |
 | --- | --- |
 | Runtime and interface | Python 3.10+ and an interactive command-line interface. |
 | Model access | DeepSeek `deepseek-chat` through the OpenAI-compatible Python SDK. |
-| Literature retrieval | The `arxiv` package; generated search queries, category filtering, and deduplication. |
+| Literature retrieval | The `arxiv` package; locally generated search queries, category filtering, and deduplication. |
 | Code context | `requests` retrieves one public GitHub file; notebook markdown and code cells are extracted. |
 | Local configuration | `python-dotenv` loads the API key from a local environment file. |
-| Orchestration and records | Explicit role sequencing, adaptive critic rigor, human feedback, and per-round JSON logs. |
+| Orchestration and records | Three model calls per round, adaptive proposer defense and critic rigor, human feedback, and per-round JSON logs. |
 
 ## Implemented capabilities
 
 - Convert a research idea into a structured proposal with a method, feasibility assessment, risks, and questions.
 - Retrieve arXiv references for each revision round.
 - Ground proposal and critique prompts in a linked public script or notebook.
-- Run a proposer–critic–evaluator loop with configurable defense level and adaptive critic strictness.
+- Run a proposer–critic–evaluator loop with an adaptive proposer defense rate and critic strictness.
 - Accept human instructions between rounds and support explicit finalization.
 - Record proposals before and after revision, critique, evaluation, reference context, and feedback.
 
@@ -51,11 +51,13 @@ These are contribution directions rather than completed features. Start by tryin
 ## How it works
 
 1. Read your research idea and optionally fetch a public GitHub file linked in it.
-2. Generate the initial structured proposal.
-3. Generate three arXiv search queries, retrieve relevant papers, and deduplicate them.
-4. Ask CRITIC to review the proposal, then ask PROPOSER to revise it.
-5. Ask EVALUATOR to score the revision and recommend the next round's critic strictness.
-6. Print the feedback and revised proposal, save a JSON round log, and wait for your input.
+2. At the start of each round, derive up to three arXiv search queries locally from the idea or current proposal, then retrieve relevant papers.
+3. Call PROPOSER to create v0 in the first round or revise the previous version in later rounds.
+4. Call CRITIC to review that proposal.
+5. Call EVALUATOR with the original idea, linked GitHub file, arXiv results, proposal, and critique. It scores the proposal and recommends the next round's proposer defense rate and critic strictness.
+6. Print the feedback and proposal, save a JSON round log, and wait for your input.
+
+Each round makes exactly three DeepSeek API calls in this order: PROPOSER, CRITIC, EVALUATOR. arXiv query generation is local and does not make an LLM call.
 
 The arXiv search currently keeps papers categorized under `cs.CV`, `cs.LG`, `cs.AI`, or `cs.CL`, with up to two papers per query from a candidate pool of 15. Other research fields may need changes to this filter in `tools.py`.
 
@@ -133,18 +135,18 @@ Edit `config.py` to change the current settings:
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `MODEL` | `deepseek-chat` | Model used for every role and search-query generation. |
-| `DEFENSE_LEVEL` | `0.3` | How readily PROPOSER accepts or defends choices during revision. Intended range: 0–1. |
+| `DEFENSE_LEVEL` | `0.3` | Initial PROPOSER defense rate. EVALUATOR recommends the rate for each following round. Intended range: 0–1. |
 | `CRITIC_STRICTNESS` | `0.4` | Initial critic rigor. EVALUATOR recommends subsequent values in 0–1. |
-| `GITHUB_REPO_URL` | A project directory URL | Currently unused by the orchestrator. Put a supported file URL in the idea instead. |
+| `GITHUB_REPO_URL` | A project directory URL | Legacy setting; currently unused. Put a supported file URL in the idea instead. |
 
-The client uses `DEEPSEEK_API_KEY` from the environment or `.env`, with `https://api.deepseek.com` as its base URL. `llm.py` sets an 8,000-token output limit per call. A complete run uses one initial model call plus four calls per round; API usage is billed by the provider.
+The client uses `DEEPSEEK_API_KEY` from the environment or `.env`, with `https://api.deepseek.com` as its base URL. `llm.py` sets an 8,000-token output limit per call. A five-round run makes up to 15 model calls; API usage is billed by the provider.
 
 ## Output and included examples
 
 Each run creates a `debate_YYYYMMDD_HHMMSS/` directory in the working directory. Each `round_XX.json` records:
 
 - Proposals before and after revision, plus the critic's feedback.
-- Defense level, strictness used, and next-round strictness.
+- Proposer defense rate and critic strictness used and recommended for the next round.
 - Evaluator scores and reasoning.
 - Retrieved arXiv context, GitHub context length, and the feedback used for that round.
 

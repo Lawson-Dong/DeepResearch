@@ -5,9 +5,6 @@ from urllib.parse import quote, unquote
 import arxiv
 import requests
 
-from llm import call_llm
-
-
 def search_arxiv(query: str, max_results: int = 3) -> str:
     """Search arXiv for papers matching the query and return a formatted string of results."""
     try:
@@ -42,27 +39,33 @@ def search_arxiv(query: str, max_results: int = 3) -> str:
 
 
 def generate_search_keywords(proposal: dict, n: int = 3) -> list:
-    """Generate short arXiv search queries from the current proposal."""
-    prompt = f"""Based on this research proposal, generate {n} short arXiv search queries (2-5 words each).
-Rules:
-- Each query should target a different aspect (problem, method, evaluation, related field).
-- Output only the queries, one per line. No numbering, no quotes, no extra text.
-
-Title: {proposal.get('title', '')}
-Problem: {proposal.get('problem', '')}
-Method: {proposal.get('method', '')[:600]}
-"""
-    text = call_llm(
-        "You are a research librarian who writes concise arXiv search queries.",
-        prompt,
-        temperature=0.3,
-    )
-
+    """Create arXiv queries locally without consuming an LLM API call."""
+    stop_words = {
+        "about", "across", "after", "based", "between", "could", "first",
+        "from", "into", "more", "over", "project", "research", "should",
+        "study", "that", "their", "there", "these", "this", "through",
+        "using", "what", "which", "with",
+    }
+    if isinstance(proposal, str):
+        fields = [proposal]
+    else:
+        fields = [
+            str(proposal.get(field, ""))
+            for field in ("title", "problem", "method")
+        ]
     keywords = []
-    for line in text.strip().split("\n"):
-        clean = line.strip().lstrip("-*•0123456789. )\t").strip().strip('"').strip("'")
-        if clean and len(clean) > 3:
-            keywords.append(clean)
+    for text in fields:
+        text = re.sub(r"https?://\S+", " ", text)
+        words = [
+            word.lower()
+            for word in re.findall(r"[A-Za-z][A-Za-z0-9-]*", text)
+            if word.lower() not in stop_words
+        ]
+        query = " ".join(words[:5])
+        if len(words) >= 2 and len(query) > 3 and query not in keywords:
+            keywords.append(query)
+        if len(keywords) >= n:
+            break
     return keywords[:n]
 
 

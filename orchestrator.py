@@ -7,6 +7,7 @@ from llm import call_llm, extract_json
 from agents import (
     build_proposer_input,
     build_critic_input,
+    build_evaluator_input,
     render,
     get_defense_instruction,
     get_critic_strictness_instruction,
@@ -38,15 +39,22 @@ def _validated_score(evaluation: dict, field: str) -> float:
 
 
 def run(original_idea, max_rounds=5):
+    if max_rounds < 1:
+        raise ValueError("max_rounds must be at least 1.")
+
     log_dir = f"debate_{datetime.now():%Y%m%d_%H%M%S}"
     os.makedirs(log_dir, exist_ok=True)
     print(f"Logs will be saved to: {log_dir}")
-    print(f"[Config] DEFENSE_LEVEL = {DEFENSE_LEVEL}  (0=deferential, 1=defensive)")
+    current_defense_rate = _validated_score(
+        {"defense_rate": DEFENSE_LEVEL},
+        "defense_rate",
+    )
     current_strictness = _validated_score(
         {"strictness": CRITIC_STRICTNESS},
         "strictness",
     )
-    print(f"[Config] CRITIC_STRICTNESS = {current_strictness:.2f}")
+    print(f"[Config] Initial PROPOSER defense rate = {current_defense_rate:.2f}")
+    print(f"[Config] Initial CRITIC strictness = {current_strictness:.2f}")
 
     arxiv_tool = ArxivSearcher(candidate_pool=15, per_query_keep=2)
     github_tool = GitHubRepo()
@@ -62,44 +70,60 @@ def run(original_idea, max_rounds=5):
     else:
         print("No GitHub URL found in the idea; skipping repo fetch.")
 
-    defense_note = get_defense_instruction(DEFENSE_LEVEL)
-    proposer_system = PROPOSER_SYSTEM + "\n\n" + defense_note
-
+    proposal = None
+    critique = None
     user_feedback = None
 
-    # Generate initial proposal v1 (no defense note needed for round 1)
-    print("\nGenerating initial proposal v1, please wait...")
-    proposal = extract_json(
-        call_llm(
-            PROPOSER_SYSTEM,
-            build_proposer_input(original_idea, None, None, None, 1, repo_context=repo_context),
-            temperature=0.5,
-        )
-    )
-
     for r in range(1, max_rounds + 1):
-        print(f"\n--- Round {r} starts ---")
+        version = r - 1
+        print(f"\n--- Round {r} starts (proposal v{version}) ---")
+
+        search_source = proposal if proposal is not None else original_idea
+        keywords = arxiv_tool.generate_keywords(search_source, n=3)
+        print(f"Generated arXiv keywords: {keywords}")
+        arxiv_context = arxiv_tool.search(keywords)
+        print("arXiv search done.")
+
+        defense_rate_used = current_defense_rate
         strictness_used = current_strictness
+        proposer_system = (
+            PROPOSER_SYSTEM
+            + "\n\n"
+            + get_defense_instruction(defense_rate_used)
+        )
+
+        print(
+            f"PROPOSER is generating v{version} "
+            f"(defense rate = {defense_rate_used:.2f})..."
+        )
+        revised_proposal = extract_json(
+            call_llm(
+                proposer_system,
+                build_proposer_input(
+                    original_idea,
+                    proposal,
+                    critique,
+                    user_feedback,
+                    version,
+                    arxiv_context,
+                    repo_context=repo_context,
+                ),
+                temperature=0.5,
+            )
+        )
+
         critic_system = (
             CRITIC_SYSTEM
             + "\n\n"
             + get_critic_strictness_instruction(strictness_used)
         )
-
-        # Search arXiv for relevant papers
-        keywords = arxiv_tool.generate_keywords(proposal, n=3)
-        print(f"Generated arXiv keywords: {keywords}")
-        arxiv_context = arxiv_tool.search(keywords)
-        print("arXiv search done.")
-
-        # CRITIC reviews the proposal using this round's strictness.
         print(f"CRITIC is reviewing (strictness = {strictness_used:.2f})...")
         critique = extract_json(
             call_llm(
                 critic_system,
                 build_critic_input(
                     original_idea,
-                    proposal,
+                    revised_proposal,
                     user_feedback,
                     r,
                     arxiv_context,
@@ -109,60 +133,54 @@ def run(original_idea, max_rounds=5):
             )
         )
 
-        # PROPOSER revises
-        print(f"PROPOSER is revising (defense level = {DEFENSE_LEVEL})...")
-        new_proposal = extract_json(
-            call_llm(
-                proposer_system,
-                build_proposer_input(
-                    original_idea,
-                    proposal,
-                    critique,
-                    user_feedback,
-                    r + 1,
-                    arxiv_context,
-                    repo_context=repo_context,
-                ),
-                temperature=0.5,
-            )
-        )
-
-        print("EVALUATOR is scoring the revised proposal...")
-        evaluator_input = (
-            f"# Revised proposal\n{json.dumps(new_proposal, ensure_ascii=False, indent=2)}\n\n"
-            f"# CRITIC feedback from this round\n"
-            f"{json.dumps(critique, ensure_ascii=False, indent=2)}"
-        )
+        print("EVALUATOR is assessing the proposal and adjusting agent rates...")
         evaluation = extract_json(
             call_llm(
                 EVALUATOR_SYSTEM,
-                evaluator_input,
+                build_evaluator_input(
+                    original_idea,
+                    revised_proposal,
+                    critique,
+                    r,
+                    arxiv_context,
+                    repo_context=repo_context,
+                    user_feedback=user_feedback,
+                    defense_rate=defense_rate_used,
+                    critic_strictness=strictness_used,
+                ),
                 temperature=0.3,
             )
         )
         completeness_score = _validated_score(evaluation, "completeness_score")
         next_strictness = _validated_score(evaluation, "suggested_critic_strictness")
+        next_defense_rate = _validated_score(
+            evaluation,
+            "suggested_proposer_defense_rate",
+        )
         reasoning = evaluation.get("reasoning")
         if not isinstance(reasoning, str) or not reasoning.strip():
             raise ValueError("EVALUATOR returned missing or invalid reasoning.")
         evaluation["completeness_score"] = completeness_score
         evaluation["suggested_critic_strictness"] = next_strictness
+        evaluation["suggested_proposer_defense_rate"] = next_defense_rate
         current_strictness = next_strictness
+        current_defense_rate = next_defense_rate
         print(
             f"EVALUATOR: completeness={completeness_score:.2f}, "
-            f"next strictness={next_strictness:.2f}"
+            f"next proposer defense={next_defense_rate:.2f}, "
+            f"next critic strictness={next_strictness:.2f}"
         )
         print(f"EVALUATOR reasoning: {reasoning}")
 
-        # Show to user
-        render(proposal, new_proposal, critique, r)
+        render(proposal or {"version": "start"}, revised_proposal, critique, r)
 
-        # Save round log
         with open(f"{log_dir}/round_{r:02d}.json", "w", encoding="utf-8") as f:
             json.dump(
                 {
                     "round": r,
-                    "defense_level": DEFENSE_LEVEL,
+                    "proposal_version": version,
+                    "proposer_defense_rate_used": defense_rate_used,
+                    "next_proposer_defense_rate": next_defense_rate,
                     "strictness_used": strictness_used,
                     "next_strictness": next_strictness,
                     "evaluation": evaluation,
@@ -170,7 +188,7 @@ def run(original_idea, max_rounds=5):
                     "repo_context_length": len(repo_context),
                     "critique": critique,
                     "before": proposal,
-                    "after": new_proposal,
+                    "after": revised_proposal,
                     "user_feedback": user_feedback,
                 },
                 f,
@@ -187,13 +205,16 @@ def run(original_idea, max_rounds=5):
             fb = "ok"
 
         if fb.lower() in ("ok", "done", "accept", "stop", "q", "quit"):
-            print(f"\nFinalized: v{new_proposal.get('version')} - {new_proposal.get('title')}")
+            print(
+                f"\nFinalized: v{revised_proposal.get('version')} "
+                f"- {revised_proposal.get('title')}"
+            )
             with open(f"{log_dir}/final.json", "w", encoding="utf-8") as f:
-                json.dump(new_proposal, f, ensure_ascii=False, indent=2)
-            return new_proposal
+                json.dump(revised_proposal, f, ensure_ascii=False, indent=2)
+            return revised_proposal
 
         user_feedback = fb or None
-        proposal = new_proposal
+        proposal = revised_proposal
 
     print(f"\nReached max rounds, stopped at v{proposal.get('version')}")
     return proposal

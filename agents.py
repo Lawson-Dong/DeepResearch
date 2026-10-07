@@ -71,7 +71,7 @@ def build_proposer_input(
         parts.append(f"{ARXIV_CONTEXT_NOTE}\n# arXiv references\n{arxiv_context}")
 
     if current is None:
-        parts.append("# Task\nThis is round 1. Turn the original idea into structured proposal v1.")
+        parts.append("# Task\nThis is round 1. Turn the original idea into structured proposal v0.")
     else:
         parts.append(f"# Current version\n{json.dumps(current, ensure_ascii=False, indent=2)}")
         parts.append(f"# CRITIC's critique on current version\n{json.dumps(critique, ensure_ascii=False, indent=2)}")
@@ -109,6 +109,45 @@ def build_critic_input(
     parts.append(
         f"# Task\nReview this version as a warm, patient professor. Prioritize the most important issues "
         f"and give concrete next steps. Output JSON with round={round_idx}."
+    )
+    return "\n\n".join(parts)
+
+
+def build_evaluator_input(
+    original_idea,
+    proposal,
+    critique,
+    round_idx,
+    arxiv_context="",
+    repo_context="",
+    user_feedback=None,
+    defense_rate=0.0,
+    critic_strictness=0.0,
+):
+    """Build an evaluator prompt with the same source context given to both agents."""
+    parts = [
+        f"# Original user idea\n{original_idea}",
+        f"# Proposal under evaluation (round {round_idx})\n"
+        f"{json.dumps(proposal, ensure_ascii=False, indent=2)}",
+        f"# CRITIC feedback from this round\n"
+        f"{json.dumps(critique, ensure_ascii=False, indent=2)}",
+        f"# Current PROPOSER defense rate\n{defense_rate:.2f}",
+        f"# Current CRITIC strictness\n{critic_strictness:.2f}",
+    ]
+
+    if repo_context:
+        parts.append(f"{GITHUB_CONTEXT_NOTE}\n# GitHub file content\n{repo_context}")
+
+    if arxiv_context:
+        parts.append(f"{ARXIV_CONTEXT_NOTE}\n# arXiv references\n{arxiv_context}")
+
+    if user_feedback:
+        parts.append(f"# Latest user instruction\n{user_feedback}")
+
+    parts.append(
+        "# Task\nEvaluate this proposal using the original idea and all supplied evidence. "
+        "Recommend the next round's PROPOSER defense rate and CRITIC strictness. "
+        "Output the JSON requested by your system instructions."
     )
     return "\n\n".join(parts)
 
