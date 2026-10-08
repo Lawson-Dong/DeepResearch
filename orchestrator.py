@@ -8,12 +8,13 @@ from agents import (
     build_proposer_input,
     build_critic_input,
     build_evaluator_input,
+    build_paper_reader_input,
     render,
     get_defense_instruction,
     get_critic_strictness_instruction,
 )
 from config import DEFENSE_LEVEL, CRITIC_STRICTNESS
-from prompts import PROPOSER_SYSTEM, CRITIC_SYSTEM, EVALUATOR_SYSTEM
+from prompts import PROPOSER_SYSTEM, CRITIC_SYSTEM, EVALUATOR_SYSTEM, PAPER_READER_SYSTEM
 from tools import ArxivSearcher, GitHubRepo
 
 
@@ -73,6 +74,7 @@ def run(original_idea, max_rounds=5):
     proposal = None
     critique = None
     user_feedback = None
+    paper_context = ""
 
     for r in range(1, max_rounds + 1):
         version = r - 1
@@ -86,6 +88,7 @@ def run(original_idea, max_rounds=5):
 
         defense_rate_used = current_defense_rate
         strictness_used = current_strictness
+        paper_context_used = paper_context
         proposer_system = (
             PROPOSER_SYSTEM
             + "\n\n"
@@ -107,6 +110,7 @@ def run(original_idea, max_rounds=5):
                     version,
                     arxiv_context,
                     repo_context=repo_context,
+                    paper_context=paper_context_used,
                 ),
                 temperature=0.5,
             )
@@ -128,6 +132,7 @@ def run(original_idea, max_rounds=5):
                     r,
                     arxiv_context,
                     repo_context=repo_context,
+                    paper_context=paper_context_used,
                 ),
                 temperature=0.5,
             )
@@ -172,6 +177,96 @@ def run(original_idea, max_rounds=5):
         )
         print(f"EVALUATOR reasoning: {reasoning}")
 
+        critic_needs = [
+            str(issue.get("issue", ""))
+            + " "
+            + str(issue.get("how_to_fix", ""))
+            for issue in critique.get("main_issues", [])
+            if isinstance(issue, dict)
+        ]
+        critic_needs.extend(
+            str(question)
+            for question in revised_proposal.get("questions_for_professor", [])
+        )
+        suggested_reading = critique.get("suggested_reading", {})
+        if isinstance(suggested_reading, dict):
+            critic_needs.append(str(suggested_reading.get("paper", "")))
+        reader_search_source = {
+            "title": revised_proposal.get("title", ""),
+            "problem": revised_proposal.get("problem", ""),
+            "method": " ".join(
+                critic_needs + [str(revised_proposal.get("method", ""))]
+            ),
+        }
+        paper_keywords = arxiv_tool.generate_keywords(reader_search_source, n=3)
+        print(f"PAPER_READER search keywords: {paper_keywords}")
+        paper_search_context = arxiv_tool.search(paper_keywords)
+        paper_candidates = arxiv_tool.parse_results(paper_search_context)[:1]
+        full_texts = [
+            {
+                **paper,
+                **arxiv_tool.fetch_full_text(paper["url"]),
+            }
+            for paper in paper_candidates
+        ]
+        for document in full_texts:
+            if document.get("error"):
+                print(
+                    f"PAPER_READER could not retrieve {document.get('url')}: "
+                    f"{document['error']}"
+                )
+            else:
+                print(
+                    f"PAPER_READER retrieved {document.get('url')} "
+                    f"from {document.get('source')} "
+                    f"({len(document.get('text', ''))} chars)."
+                )
+
+        print("PAPER_READER is summarizing full texts for the next round...")
+        paper_reader_result = extract_json(
+            call_llm(
+                PAPER_READER_SYSTEM,
+                build_paper_reader_input(
+                    original_idea,
+                    revised_proposal,
+                    critique,
+                    r,
+                    paper_keywords,
+                    paper_search_context,
+                    paper_candidates,
+                    full_texts,
+                ),
+                temperature=0.2,
+            )
+        )
+        if not isinstance(paper_reader_result, dict):
+            raise ValueError("PAPER_READER response must be a JSON object.")
+        summaries = paper_reader_result.get("papers")
+        unavailable = paper_reader_result.get("unavailable_papers")
+        if not isinstance(summaries, list) or not isinstance(unavailable, list):
+            raise ValueError(
+                "PAPER_READER response must contain papers and unavailable_papers lists."
+            )
+        available_urls = {
+            document["url"]
+            for document in full_texts
+            if isinstance(document.get("text"), str) and document["text"].strip()
+        }
+        for summary in summaries:
+            if not isinstance(summary, dict) or summary.get("arxiv_url") not in available_urls:
+                raise ValueError(
+                    "PAPER_READER returned a summary without a matching retrieved full text."
+                )
+        paper_context = json.dumps(
+            paper_reader_result,
+            ensure_ascii=False,
+            indent=2,
+        )
+        print(
+            f"PAPER_READER prepared {len(summaries)} paper summary(ies) "
+            "for the next round."
+        )
+
         render(proposal or {"version": "start"}, revised_proposal, critique, r)
 
         with open(f"{log_dir}/round_{r:02d}.json", "w", encoding="utf-8") as f:
@@ -185,6 +280,19 @@ def run(original_idea, max_rounds=5):
                     "next_strictness": next_strictness,
                     "evaluation": evaluation,
                     "arxiv_context": arxiv_context,
+                    "paper_context_used": paper_context_used,
+                    "paper_context_for_next_round": paper_reader_result,
+                    "paper_search_keywords": paper_keywords,
+                    "paper_search_context": paper_search_context,
+                    "paper_full_text_status": [
+                        {
+                            "url": document.get("url"),
+                            "source": document.get("source"),
+                            "truncated": document.get("truncated"),
+                            "error": document.get("error"),
+                        }
+                        for document in full_texts
+                    ],
                     "repo_context_length": len(repo_context),
                     "critique": critique,
                     "before": proposal,

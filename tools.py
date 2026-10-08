@@ -1,9 +1,54 @@
+import gzip
+import io
 import json
+import posixpath
 import re
+import tarfile
+from html.parser import HTMLParser
 from urllib.parse import quote, unquote
 
 import arxiv
 import requests
+
+
+class _PaperHTMLParser(HTMLParser):
+    """Extract readable text from arXiv HTML papers."""
+
+    _ignored_tags = {"script", "style", "nav", "header", "footer"}
+    _line_break_tags = {"article", "div", "h1", "h2", "h3", "h4", "li", "p", "section"}
+
+    def __init__(self):
+        super().__init__()
+        self._ignored_depth = 0
+        self._parts = []
+
+    def handle_starttag(self, tag, _attrs):
+        if tag in self._ignored_tags:
+            self._ignored_depth += 1
+        elif not self._ignored_depth and tag in self._line_break_tags:
+            self._parts.append("\n")
+        elif not self._ignored_depth and tag == "img":
+            alt_text = next(
+                (value for name, value in _attrs if name == "alt" and value),
+                None,
+            )
+            if alt_text:
+                self._parts.append(f"\n[Figure: {alt_text}]\n")
+
+    def handle_endtag(self, tag):
+        if tag in self._ignored_tags and self._ignored_depth:
+            self._ignored_depth -= 1
+        elif not self._ignored_depth and tag in self._line_break_tags:
+            self._parts.append("\n")
+
+    def handle_data(self, data):
+        if not self._ignored_depth:
+            self._parts.append(data)
+
+    def get_text(self):
+        lines = (" ".join(line.split()) for line in "".join(self._parts).splitlines())
+        return "\n".join(line for line in lines if line)
+
 
 def search_arxiv(query: str, max_results: int = 3) -> str:
     """Search arXiv for papers matching the query and return a formatted string of results."""
@@ -119,6 +164,8 @@ def search_arxiv_multi(keywords: list, per_query_keep: int = 2, candidate_pool: 
 class ArxivSearcher:
     """Configurable wrapper around the existing arXiv search helpers."""
 
+    max_paper_text_chars = 24000
+
     def __init__(self, candidate_pool: int = 15, per_query_keep: int = 2):
         self.candidate_pool = candidate_pool
         self.per_query_keep = per_query_keep
@@ -132,6 +179,154 @@ class ArxivSearcher:
             per_query_keep=self.per_query_keep,
             candidate_pool=self.candidate_pool,
         )
+
+    @staticmethod
+    def parse_results(context: str) -> list:
+        """Parse the formatted arXiv search output into paper metadata."""
+        papers = []
+        for block in context.split("\n\n---\n\n"):
+            paper = {}
+            for line in block.splitlines():
+                for field in ("Title", "Authors", "Published", "Summary", "URL"):
+                    prefix = f"{field}: "
+                    if line.startswith(prefix):
+                        paper[field.lower()] = line[len(prefix):]
+                        break
+            if paper.get("url", "").startswith("https://arxiv.org/abs/"):
+                papers.append(paper)
+        return papers
+
+    @staticmethod
+    def _extract_source_text(content: bytes) -> str:
+        """Read the main TeX source from an arXiv source archive."""
+        try:
+            with tarfile.open(fileobj=io.BytesIO(content), mode="r:*") as archive:
+                tex_files = [
+                    member for member in archive.getmembers()
+                    if member.isfile() and member.name.lower().endswith(".tex")
+                ]
+                if not tex_files:
+                    raise ValueError("The arXiv source archive contains no TeX files.")
+                sources = {}
+                for member in tex_files:
+                    source_file = archive.extractfile(member)
+                    if source_file is not None:
+                        member_name = posixpath.normpath(member.name.removeprefix("./"))
+                        sources[member_name] = source_file.read().decode(
+                            "utf-8",
+                            errors="replace",
+                        )
+                if not sources:
+                    raise ValueError("Could not read the TeX source files.")
+                main_name = max(
+                    sources,
+                    key=lambda name: (
+                        "\\documentclass" in sources[name][:4096],
+                        len(sources[name]),
+                    ),
+                )
+
+                def expand_includes(name, visited):
+                    if name in visited:
+                        return ""
+                    visited.add(name)
+                    text = sources[name]
+
+                    def replace_include(match):
+                        include_name = posixpath.normpath(
+                            posixpath.join(
+                                posixpath.dirname(name),
+                                match.group(1).strip(),
+                            )
+                        )
+                        candidates = (include_name, include_name + ".tex")
+                        for candidate in candidates:
+                            if candidate in sources:
+                                return expand_includes(candidate, visited)
+                        return match.group(0)
+
+                    return re.sub(
+                        r"\\(?:input|include)\s*\{([^{}]+)\}",
+                        replace_include,
+                        text,
+                    )
+
+                source = expand_includes(main_name, set())
+        except (tarfile.TarError, OSError):
+            try:
+                source = gzip.decompress(content).decode("utf-8", errors="replace")
+            except (OSError, EOFError) as error:
+                raise ValueError("The arXiv source was not a readable TeX archive.") from error
+
+        source = re.sub(r"(?m)(?<!\\)%.*$", "", source)
+        source = re.sub(r"\\begin\{document\}|\\end\{document\}", "\n", source)
+        source = re.sub(r"\\(?:section|subsection|subsubsection|paragraph)\*?\s*\{([^{}]*)\}", r"\n\1\n", source)
+        source = re.sub(r"\\(?:cite|citep|citet|ref|label)\*?\s*\{([^{}]*)\}", r" [\1] ", source)
+        source = re.sub(r"\\[A-Za-z]+(?:\*?)(?:\[[^\]]*\])?", " ", source)
+        source = source.replace("{", " ").replace("}", " ")
+        return re.sub(r"[ \t]+\n", "\n", source).strip()
+
+    def fetch_full_text(
+        self,
+        paper_url: str,
+        max_chars: int = max_paper_text_chars,
+    ) -> dict:
+        """Fetch an arXiv paper as readable HTML text, with TeX source fallback."""
+        match = re.fullmatch(
+            r"https?://arxiv\.org/abs/([^?#]+)",
+            paper_url.strip(),
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return {"url": paper_url, "error": "Not a supported arXiv abstract URL."}
+
+        paper_id = unquote(match.group(1))
+        encoded_id = quote(paper_id, safe="/")
+        html_error = None
+        try:
+            response = requests.get(
+                f"https://arxiv.org/html/{encoded_id}",
+                timeout=30,
+            )
+            response.raise_for_status()
+            parser = _PaperHTMLParser()
+            parser.feed(response.text)
+            text = parser.get_text()
+            has_paper_content = re.search(
+                r"<article\b|ltx_document",
+                response.text,
+                flags=re.IGNORECASE,
+            )
+            if len(text) >= 300 and has_paper_content:
+                return {
+                    "url": paper_url,
+                    "source": "arXiv HTML",
+                    "text": text[:max_chars],
+                    "truncated": len(text) > max_chars,
+                }
+            html_error = "The arXiv HTML page did not contain enough paper text."
+        except requests.RequestException as error:
+            html_error = str(error)
+
+        try:
+            response = requests.get(
+                f"https://export.arxiv.org/e-print/{encoded_id}",
+                timeout=30,
+            )
+            response.raise_for_status()
+            source = self._extract_source_text(response.content)
+            return {
+                "url": paper_url,
+                "source": "arXiv TeX source",
+                "text": source[:max_chars],
+                "truncated": len(source) > max_chars,
+                "html_fallback_reason": html_error,
+            }
+        except (requests.RequestException, ValueError) as error:
+            return {
+                "url": paper_url,
+                "error": f"Could not retrieve HTML ({html_error}) or TeX source ({error}).",
+            }
 
 
 class GitHubRepo:

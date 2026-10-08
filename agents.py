@@ -1,5 +1,5 @@
 import json
-from prompts import ARXIV_CONTEXT_NOTE, GITHUB_CONTEXT_NOTE
+from prompts import ARXIV_CONTEXT_NOTE, GITHUB_CONTEXT_NOTE, PAPER_CONTEXT_NOTE
 
 def get_defense_instruction(level: float) -> str:
     """
@@ -60,6 +60,7 @@ def build_proposer_input(
     round_idx,
     arxiv_context="",
     repo_context="",
+    paper_context="",
 ):
     """Build input for PROPOSER"""
     parts = [f"# Original user idea\n{original_idea}"]
@@ -69,6 +70,9 @@ def build_proposer_input(
 
     if arxiv_context:
         parts.append(f"{ARXIV_CONTEXT_NOTE}\n# arXiv references\n{arxiv_context}")
+
+    if paper_context:
+        parts.append(f"{PAPER_CONTEXT_NOTE}\n{paper_context}")
 
     if current is None:
         parts.append("# Task\nThis is round 1. Turn the original idea into structured proposal v0.")
@@ -90,6 +94,7 @@ def build_critic_input(
     round_idx,
     arxiv_context="",
     repo_context="",
+    paper_context="",
 ):
     """Build input for CRITIC"""
     parts = [
@@ -103,6 +108,9 @@ def build_critic_input(
     if arxiv_context:
         parts.append(f"{ARXIV_CONTEXT_NOTE}\n# arXiv references\n{arxiv_context}")
 
+    if paper_context:
+        parts.append(f"{PAPER_CONTEXT_NOTE}\n{paper_context}")
+
     if user_feedback:
         parts.append(f"# Latest user instruction\n{user_feedback}")
 
@@ -111,6 +119,38 @@ def build_critic_input(
         f"and give concrete next steps. Output JSON with round={round_idx}."
     )
     return "\n\n".join(parts)
+
+
+def build_paper_reader_input(
+    original_idea,
+    proposal,
+    critique,
+    round_idx,
+    paper_keywords,
+    paper_search_context,
+    paper_candidates,
+    full_texts,
+):
+    """Build the isolated full-text summarization input for PAPER_READER."""
+    return "\n\n".join(
+        [
+            f"# Original user idea\n{original_idea}",
+            f"# Proposal from round {round_idx}\n"
+            f"{json.dumps(proposal, ensure_ascii=False, indent=2)}",
+            f"# CRITIC's literature needs from round {round_idx}\n"
+            f"{json.dumps(critique, ensure_ascii=False, indent=2)}",
+            f"# Search keywords based on this round's proposal and critique\n"
+            f"{json.dumps(paper_keywords, ensure_ascii=False)}",
+            f"# Candidate arXiv papers\n"
+            f"{json.dumps(paper_candidates, ensure_ascii=False, indent=2)}",
+            f"# Search results and retrieval status\n{paper_search_context}",
+            f"# Retrieved full text (at most one complete paper)\n"
+            f"{json.dumps(full_texts, ensure_ascii=False, indent=2)}",
+            "# Task\nRead the supplied full texts and return the evidence-grounded JSON summary "
+            "required by your system instructions. These notes will be provided to PROPOSER "
+            "and CRITIC at the start of the next round.",
+        ]
+    )
 
 
 def build_evaluator_input(

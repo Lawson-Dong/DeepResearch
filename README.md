@@ -4,7 +4,7 @@
 
 [GitHub repository](https://github.com/Lawson-Dong/DeepResearch) · [Lawson Dong's personal website](https://lawson-dong.vercel.app/)
 
-DeepResearch is an open-source command-line prototype powered by DeepSeek. Three prompted roles help turn a raw research idea into a small, feasible proposal: an undergraduate **PROPOSER**, a professor **CRITIC**, and an **EVALUATOR** that adjusts the proposer's defense rate and the critic's rigor for the next round.
+DeepResearch is an open-source command-line prototype powered by DeepSeek. Four prompted roles help turn a raw research idea into a small, feasible proposal: an undergraduate **PROPOSER**, a professor **CRITIC**, an **EVALUATOR** that adjusts the proposer's defense rate and the critic's rigor, and a **PAPER_READER** that summarizes retrieved arXiv full text for the next round.
 
 The user can review each revision, add instructions, and decide when to stop. These roles are separate calls to the same model.
 
@@ -25,7 +25,7 @@ The infrastructure is a small Python orchestration layer around model calls, ret
 | Literature retrieval | The `arxiv` package; locally generated search queries, category filtering, and deduplication. |
 | Code context | `requests` retrieves one public GitHub file; notebook markdown and code cells are extracted. |
 | Local configuration | `python-dotenv` loads the API key from a local environment file. |
-| Orchestration and records | Three model calls per round, adaptive proposer defense and critic rigor, human feedback, and per-round JSON logs. |
+| Orchestration and records | Four model calls per round, adaptive proposer defense and critic rigor, human feedback, and per-round JSON logs. |
 
 ## Implemented capabilities
 
@@ -33,8 +33,9 @@ The infrastructure is a small Python orchestration layer around model calls, ret
 - Retrieve arXiv references for each revision round.
 - Ground proposal and critique prompts in a linked public script or notebook.
 - Run a proposer–critic–evaluator loop with an adaptive proposer defense rate and critic strictness.
+- Retrieve and summarize one relevant arXiv paper per round; share the summary with PROPOSER and CRITIC in the following round.
 - Accept human instructions between rounds and support explicit finalization.
-- Record proposals before and after revision, critique, evaluation, reference context, and feedback.
+- Record proposals before and after revision, critique, evaluation, paper-reading results, reference context, and feedback.
 
 ## Contributors wanted
 
@@ -55,11 +56,12 @@ These are contribution directions rather than completed features. Start by tryin
 3. Call PROPOSER to create v0 in round 1 or revise the previous version in later rounds.
 4. Call CRITIC to review that proposal.
 5. Call EVALUATOR with the original idea, current proposal, CRITIC feedback, and the same GitHub and arXiv context. It scores the proposal and recommends the next round's PROPOSER defense rate and CRITIC strictness.
-6. Print the feedback and proposal, save a JSON round log, and wait for your input.
+6. Call PAPER_READER to search using this round's proposal and CRITIC's literature needs, retrieve at most one paper's full text, and produce an evidence-grounded summary.
+7. Print the feedback and proposal, save a JSON round log, and wait for your input.
 
-All three agents receive the original idea and the available source context: the linked GitHub file and that round's arXiv results. Each round makes exactly three DeepSeek API calls, in this order: PROPOSER, CRITIC, EVALUATOR. arXiv query generation is local and does not make an LLM call.
+PROPOSER, CRITIC, and EVALUATOR receive the original idea and available source context: the linked GitHub file and that round's arXiv results. PAPER_READER receives the proposal, CRITIC's feedback, arXiv search results, and retrieved paper text. Its summaries are passed to PROPOSER and CRITIC starting in the next round; PAPER_READER does not take part in the debate, and EVALUATOR does not receive its summaries. Each round makes exactly four DeepSeek API calls, in this order: PROPOSER, CRITIC, EVALUATOR, PAPER_READER. arXiv query generation is local and does not make an LLM call.
 
-The arXiv search currently keeps papers categorized under `cs.CV`, `cs.LG`, `cs.AI`, or `cs.CL`, with up to two papers per query from a candidate pool of 15. Other research fields may need changes to this filter in `tools.py`.
+The debate's arXiv search currently keeps papers categorized under `cs.CV`, `cs.LG`, `cs.AI`, or `cs.CL`, with up to two papers per query from a candidate pool of 15. PAPER_READER performs a separate search based on the proposal and CRITIC's feedback, then retrieves at most one candidate's full text. It prefers arXiv HTML and falls back to the TeX source, including referenced `\input` and `\include` files when available. The text passed to PAPER_READER is capped at 24,000 characters; truncation and retrieval failures are reported in its input and round log. Other research fields may need changes to the category filter in `tools.py`.
 
 ## Quick start
 
@@ -134,12 +136,12 @@ Edit `config.py` to change the current settings:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `MODEL` | `deepseek-chat` | Model used for PROPOSER, CRITIC, and EVALUATOR. arXiv search queries are generated locally. |
+| `MODEL` | `deepseek-chat` | Model used for all four agents. arXiv search queries are generated locally. |
 | `DEFENSE_LEVEL` | `0.3` | Initial PROPOSER defense rate. EVALUATOR recommends the rate for each following round. Intended range: 0–1. |
 | `CRITIC_STRICTNESS` | `0.4` | Initial critic rigor. EVALUATOR recommends subsequent values in 0–1. |
 | `GITHUB_REPO_URL` | A project directory URL | Legacy setting; currently unused. Put a supported file URL in the idea instead. |
 
-The client uses `DEEPSEEK_API_KEY` from the environment or `.env`, with `https://api.deepseek.com` as its base URL. `llm.py` sets an 8,000-token output limit per call. A five-round run makes up to 15 model calls; API usage is billed by the provider.
+The client uses `DEEPSEEK_API_KEY` from the environment or `.env`, with `https://api.deepseek.com` as its base URL. `llm.py` sets an 8,000-token output limit per call. A five-round run makes up to 20 model calls; API usage is billed by the provider.
 
 ## Output and included examples
 
@@ -148,6 +150,7 @@ Each run creates a `debate_YYYYMMDD_HHMMSS/` directory in the working directory.
 - Proposals before and after revision, plus the critic's feedback.
 - Proposer defense rate and critic strictness used and recommended for the next round.
 - Evaluator scores and reasoning.
+- The PAPER_READER summary prepared for the next round, the summary used in this round, search keywords, and full-text retrieval status.
 - Retrieved arXiv context, GitHub context length, and the feedback used for that round.
 
 `final.json` is written when the user explicitly finalizes or input ends. Reaching the round limit returns the last proposal without writing `final.json`; the last `round_XX.json` still contains that proposal in `after`.
@@ -164,17 +167,17 @@ Both are single-round records, not complete finalized sessions. New run director
 | File | Responsibility |
 | --- | --- |
 | `main.py` | Interactive entry point and round limit. |
-| `orchestrator.py` | Debate loop, evaluator validation, user feedback, and log persistence. |
+| `orchestrator.py` | Four-agent round loop, evaluator validation, paper retrieval, user feedback, and log persistence. |
 | `agents.py` | Role input builders, behavior instructions, and terminal rendering. |
-| `prompts.py` | Role prompts, reference instructions, and JSON response schemas. |
+| `prompts.py` | Four role prompts, reference instructions, and JSON response schemas. |
 | `llm.py` | DeepSeek calls and JSON extraction. |
-| `tools.py` | arXiv retrieval and public GitHub file / notebook extraction. |
+| `tools.py` | arXiv search and full-text retrieval, plus public GitHub file / notebook extraction. |
 | `config.py` | API client and debate settings. |
 | `requirements.txt` | Direct dependency versions from the supplied environment. |
 
 ## Current limitations
 
-This is a research planning prototype. Model scores are subjective assessments, and references and methodological claims need human verification. The code retrieves abstracts rather than full papers and does not execute experiments or edit the reviewed repository.
+This is a research planning prototype. Model scores are subjective assessments, and references and methodological claims need human verification. PAPER_READER summarizes retrieved text, which may be truncated or unavailable for some papers, and does not independently verify that a cited source supports a claim. The application does not execute experiments or edit the reviewed repository.
 
 Model output must parse as JSON. Evaluator scores and reasoning are validated, but proposer and critic responses do not have complete schema validation. Network failures and malformed responses can interrupt a run; there is no resume mechanism.
 
