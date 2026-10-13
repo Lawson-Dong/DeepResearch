@@ -10,11 +10,21 @@ from agents import (
     build_evaluator_input,
     build_paper_reader_input,
     render,
+    render_knowledge_note,
     get_defense_instruction,
     get_critic_strictness_instruction,
+    get_knowledge_critic_strictness_instruction,
 )
 from config import DEFENSE_LEVEL, CRITIC_STRICTNESS
-from prompts import PROPOSER_SYSTEM, CRITIC_SYSTEM, EVALUATOR_SYSTEM, PAPER_READER_SYSTEM
+from prompts import (
+    CRITIC_SYSTEM,
+    EVALUATOR_SYSTEM,
+    KNOWLEDGE_CRITIC_SYSTEM,
+    KNOWLEDGE_EVALUATOR_SYSTEM,
+    KNOWLEDGE_PROPOSER_SYSTEM,
+    PAPER_READER_SYSTEM,
+    PROPOSER_SYSTEM,
+)
 from tools import ArxivSearcher, GitHubRepo
 
 
@@ -39,13 +49,19 @@ def _validated_score(evaluation: dict, field: str) -> float:
     return score
 
 
-def run(original_idea, max_rounds=5):
+def run(original_idea, max_rounds=5, mode="research"):
     if max_rounds < 1:
         raise ValueError("max_rounds must be at least 1.")
+    if mode not in {"research", "knowledge"}:
+        raise ValueError("mode must be either 'research' or 'knowledge'.")
 
-    log_dir = f"debate_{datetime.now():%Y%m%d_%H%M%S}"
+    log_dir = f"debate_{mode}_{datetime.now():%Y%m%d_%H%M%S}"
     os.makedirs(log_dir, exist_ok=True)
+    print(f"Mode: {mode}")
     print(f"Logs will be saved to: {log_dir}")
+    proposer_prompt = PROPOSER_SYSTEM if mode == "research" else KNOWLEDGE_PROPOSER_SYSTEM
+    critic_prompt = CRITIC_SYSTEM if mode == "research" else KNOWLEDGE_CRITIC_SYSTEM
+    evaluator_prompt = EVALUATOR_SYSTEM if mode == "research" else KNOWLEDGE_EVALUATOR_SYSTEM
     current_defense_rate = _validated_score(
         {"defense_rate": DEFENSE_LEVEL},
         "defense_rate",
@@ -78,9 +94,17 @@ def run(original_idea, max_rounds=5):
 
     for r in range(1, max_rounds + 1):
         version = r - 1
-        print(f"\n--- Round {r} starts (proposal v{version}) ---")
+        subject_name = "proposal" if mode == "research" else "knowledge note"
+        print(f"\n--- Round {r} starts ({subject_name} v{version}) ---")
 
-        search_source = proposal if proposal is not None else original_idea
+        if proposal is None or mode == "research":
+            search_source = proposal if proposal is not None else original_idea
+        else:
+            search_source = {
+                "title": proposal.get("title", ""),
+                "problem": proposal.get("core_question", ""),
+                "method": proposal.get("current_understanding", ""),
+            }
         keywords = arxiv_tool.generate_keywords(search_source, n=3)
         print(f"Generated arXiv keywords: {keywords}")
         arxiv_context = arxiv_tool.search(keywords)
@@ -90,7 +114,7 @@ def run(original_idea, max_rounds=5):
         strictness_used = current_strictness
         paper_context_used = paper_context
         proposer_system = (
-            PROPOSER_SYSTEM
+            proposer_prompt
             + "\n\n"
             + get_defense_instruction(defense_rate_used)
         )
@@ -111,16 +135,18 @@ def run(original_idea, max_rounds=5):
                     arxiv_context,
                     repo_context=repo_context,
                     paper_context=paper_context_used,
+                    mode=mode,
                 ),
                 temperature=0.5,
             )
         )
 
-        critic_system = (
-            CRITIC_SYSTEM
-            + "\n\n"
-            + get_critic_strictness_instruction(strictness_used)
+        strictness_instruction = (
+            get_critic_strictness_instruction(strictness_used)
+            if mode == "research"
+            else get_knowledge_critic_strictness_instruction(strictness_used)
         )
+        critic_system = critic_prompt + "\n\n" + strictness_instruction
         print(f"CRITIC is reviewing (strictness = {strictness_used:.2f})...")
         critique = extract_json(
             call_llm(
@@ -133,15 +159,18 @@ def run(original_idea, max_rounds=5):
                     arxiv_context,
                     repo_context=repo_context,
                     paper_context=paper_context_used,
+                    mode=mode,
                 ),
                 temperature=0.5,
             )
         )
 
-        print("EVALUATOR is assessing the proposal and adjusting agent rates...")
+        print(
+            f"EVALUATOR is assessing the {subject_name} and adjusting agent rates..."
+        )
         evaluation = extract_json(
             call_llm(
-                EVALUATOR_SYSTEM,
+                evaluator_prompt,
                 build_evaluator_input(
                     original_idea,
                     revised_proposal,
@@ -152,6 +181,7 @@ def run(original_idea, max_rounds=5):
                     user_feedback=user_feedback,
                     defense_rate=defense_rate_used,
                     critic_strictness=strictness_used,
+                    mode=mode,
                 ),
                 temperature=0.3,
             )
@@ -186,18 +216,30 @@ def run(original_idea, max_rounds=5):
         ]
         critic_needs.extend(
             str(question)
-            for question in revised_proposal.get("questions_for_professor", [])
+            for question in revised_proposal.get(
+                "questions_for_professor" if mode == "research" else "questions_for_critic",
+                [],
+            )
         )
         suggested_reading = critique.get("suggested_reading", {})
         if isinstance(suggested_reading, dict):
             critic_needs.append(str(suggested_reading.get("paper", "")))
-        reader_search_source = {
-            "title": revised_proposal.get("title", ""),
-            "problem": revised_proposal.get("problem", ""),
-            "method": " ".join(
-                critic_needs + [str(revised_proposal.get("method", ""))]
-            ),
-        }
+        if mode == "research":
+            reader_search_source = {
+                "title": revised_proposal.get("title", ""),
+                "problem": revised_proposal.get("problem", ""),
+                "method": " ".join(
+                    critic_needs + [str(revised_proposal.get("method", ""))]
+                ),
+            }
+        else:
+            reader_search_source = {
+                "title": revised_proposal.get("title", ""),
+                "problem": revised_proposal.get("core_question", ""),
+                "method": " ".join(
+                    critic_needs + [str(revised_proposal.get("current_understanding", ""))]
+                ),
+            }
         paper_keywords = arxiv_tool.generate_keywords(reader_search_source, n=3)
         print(f"PAPER_READER search keywords: {paper_keywords}")
         paper_search_context = arxiv_tool.search(paper_keywords)
@@ -235,6 +277,7 @@ def run(original_idea, max_rounds=5):
                     paper_search_context,
                     paper_candidates,
                     full_texts,
+                    mode=mode,
                 ),
                 temperature=0.2,
             )
@@ -267,42 +310,54 @@ def run(original_idea, max_rounds=5):
             "for the next round."
         )
 
-        render(proposal or {"version": "start"}, revised_proposal, critique, r)
+        renderer = render if mode == "research" else render_knowledge_note
+        renderer(proposal or {"version": "start"}, revised_proposal, critique, r)
 
-        with open(f"{log_dir}/round_{r:02d}.json", "w", encoding="utf-8") as f:
-            json.dump(
+        round_record = {
+            "round": r,
+            "mode": mode,
+            "proposer_defense_rate_used": defense_rate_used,
+            "next_proposer_defense_rate": next_defense_rate,
+            "strictness_used": strictness_used,
+            "next_strictness": next_strictness,
+            "evaluation": evaluation,
+            "arxiv_context": arxiv_context,
+            "paper_context_used": paper_context_used,
+            "paper_context_for_next_round": paper_reader_result,
+            "paper_search_keywords": paper_keywords,
+            "paper_search_context": paper_search_context,
+            "paper_full_text_status": [
                 {
-                    "round": r,
+                    "url": document.get("url"),
+                    "source": document.get("source"),
+                    "truncated": document.get("truncated"),
+                    "error": document.get("error"),
+                }
+                for document in full_texts
+            ],
+            "repo_context_length": len(repo_context),
+            "critique": critique,
+            "user_feedback": user_feedback,
+        }
+        if mode == "research":
+            round_record.update(
+                {
                     "proposal_version": version,
-                    "proposer_defense_rate_used": defense_rate_used,
-                    "next_proposer_defense_rate": next_defense_rate,
-                    "strictness_used": strictness_used,
-                    "next_strictness": next_strictness,
-                    "evaluation": evaluation,
-                    "arxiv_context": arxiv_context,
-                    "paper_context_used": paper_context_used,
-                    "paper_context_for_next_round": paper_reader_result,
-                    "paper_search_keywords": paper_keywords,
-                    "paper_search_context": paper_search_context,
-                    "paper_full_text_status": [
-                        {
-                            "url": document.get("url"),
-                            "source": document.get("source"),
-                            "truncated": document.get("truncated"),
-                            "error": document.get("error"),
-                        }
-                        for document in full_texts
-                    ],
-                    "repo_context_length": len(repo_context),
-                    "critique": critique,
                     "before": proposal,
                     "after": revised_proposal,
-                    "user_feedback": user_feedback,
-                },
-                f,
-                ensure_ascii=False,
-                indent=2,
+                }
             )
+        else:
+            round_record.update(
+                {
+                    "note_version": version,
+                    "note_before": proposal,
+                    "note_after": revised_proposal,
+                }
+            )
+
+        with open(f"{log_dir}/round_{r:02d}.json", "w", encoding="utf-8") as f:
+            json.dump(round_record, f, ensure_ascii=False, indent=2)
 
         # Wait for user feedback
         try:
@@ -314,15 +369,19 @@ def run(original_idea, max_rounds=5):
 
         if fb.lower() in ("ok", "done", "accept", "stop", "q", "quit"):
             print(
-                f"\nFinalized: v{revised_proposal.get('version')} "
+                f"\nFinalized {subject_name}: v{revised_proposal.get('version')} "
                 f"- {revised_proposal.get('title')}"
             )
-            with open(f"{log_dir}/final.json", "w", encoding="utf-8") as f:
+            final_name = "final.json" if mode == "research" else "final_note.json"
+            with open(f"{log_dir}/{final_name}", "w", encoding="utf-8") as f:
                 json.dump(revised_proposal, f, ensure_ascii=False, indent=2)
             return revised_proposal
 
         user_feedback = fb or None
         proposal = revised_proposal
 
-    print(f"\nReached max rounds, stopped at v{proposal.get('version')}")
+    print(
+        f"\nReached max rounds, stopped at {subject_name} "
+        f"v{proposal.get('version')}"
+    )
     return proposal

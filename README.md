@@ -1,16 +1,16 @@
 # DeepResearch
 
-**Open infrastructure for AI-assisted research, starting with an interactive proposal, critique, and revision loop.**
+**Open infrastructure for AI-assisted research and learning through an interactive, evidence-aware debate.**
 
 [GitHub repository](https://github.com/Lawson-Dong/DeepResearch) · [Lawson Dong's personal website](https://lawson-dong.vercel.app/)
 
-DeepResearch is an open-source command-line prototype powered by DeepSeek. Four prompted roles help turn a raw research idea into a small, feasible proposal: an undergraduate **PROPOSER**, a professor **CRITIC**, an **EVALUATOR** that adjusts the proposer's defense rate and the critic's rigor, and a **PAPER_READER** that summarizes retrieved arXiv full text for the next round.
+DeepResearch is an open-source command-line prototype powered by DeepSeek with two selectable modes: **research debate**, which develops a feasible research proposal, and **knowledge debate**, which clarifies a topic and produces a structured note rather than a proposal. Both modes use four prompted roles: **PROPOSER**, **CRITIC**, **EVALUATOR**, and **PAPER_READER**.
 
 The user can review each revision, add instructions, and decide when to stop. These roles are separate calls to the same model.
 
 ## Motivation
 
-Moving from an interesting idea to a testable research plan involves more than generating an answer. It requires finding related work, questioning assumptions, narrowing the scope, responding to criticism, and recording why a proposal changed.
+Developing a research plan or understanding a difficult topic involves more than generating an answer. It requires finding relevant evidence, questioning assumptions, clarifying concepts, responding to criticism, and recording how an explanation improves.
 
 DeepResearch brings those steps into an explicit workflow that a researcher can inspect and steer. Its longer-term goal is to support end-to-end research agents: connecting proposal refinement to experiment design, execution, evaluation, and reproducible reporting. The current implementation covers the planning and revision stage.
 
@@ -29,13 +29,14 @@ The infrastructure is a small Python orchestration layer around model calls, ret
 
 ## Implemented capabilities
 
-- Convert a research idea into a structured proposal with a method, feasibility assessment, risks, and questions.
+- In research mode, convert an idea into a structured proposal with a method, feasibility assessment, risks, and questions.
+- In knowledge mode, debate the accuracy and clarity of a topic and produce a structured note with key claims, distinctions, sources, and uncertainties.
 - Retrieve arXiv references for each revision round.
-- Ground proposal and critique prompts in a linked public script or notebook.
-- Run a proposer–critic–evaluator loop with an adaptive proposer defense rate and critic strictness.
+- Ground the discussion in a linked public script or notebook when one is provided.
+- Run a four-agent debate with adaptive PROPOSER defense and CRITIC rigor.
 - Retrieve and summarize one relevant arXiv paper per round; share the summary with PROPOSER and CRITIC in the following round.
 - Accept human instructions between rounds and support explicit finalization.
-- Record proposals before and after revision, critique, evaluation, paper-reading results, reference context, and feedback.
+- Record proposals or notes before and after revision, critique, evaluation, paper-reading results, reference context, and feedback.
 
 ## Contributors wanted
 
@@ -51,15 +52,17 @@ These are contribution directions rather than completed features. Start by tryin
 
 ## How it works
 
-1. Read your research idea and optionally fetch the single public GitHub file linked in it.
-2. At the start of each round, derive up to three arXiv search queries locally from the idea (round 1) or current proposal (later rounds), then retrieve relevant papers.
-3. Call PROPOSER to create v0 in round 1 or revise the previous version in later rounds.
-4. Call CRITIC to review that proposal.
-5. Call EVALUATOR with the original idea, current proposal, CRITIC feedback, and the same GitHub and arXiv context. It scores the proposal and recommends the next round's PROPOSER defense rate and CRITIC strictness.
-6. Call PAPER_READER to search using this round's proposal and CRITIC's literature needs, retrieve at most one paper's full text, and produce an evidence-grounded summary.
-7. Print the feedback and proposal, save a JSON round log, and wait for your input.
+1. Choose research or knowledge debate. Enter the research idea or knowledge topic; either mode can optionally fetch the single public GitHub file linked in the input.
+2. At the start of each round, derive up to three arXiv search queries locally from the input (round 1) or current proposal/note (later rounds), then retrieve relevant papers.
+3. Call PROPOSER to create proposal v0 or knowledge note v0 in round 1, and revise that artifact in later rounds.
+4. Call CRITIC to review the proposal or note.
+5. Call EVALUATOR with the original input, current artifact, CRITIC feedback, and the same GitHub and arXiv context. It scores the artifact and recommends the next round's PROPOSER defense rate and CRITIC strictness.
+6. Call PAPER_READER to search using this round's artifact and CRITIC's needs, retrieve at most one paper's full text, and produce an evidence-grounded summary.
+7. Print the feedback and artifact, save a JSON round log, and wait for your input.
 
-PROPOSER, CRITIC, and EVALUATOR receive the original idea and available source context: the linked GitHub file and that round's arXiv results. PAPER_READER receives the proposal, CRITIC's feedback, arXiv search results, and retrieved paper text. Its summaries are passed to PROPOSER and CRITIC starting in the next round; PAPER_READER does not take part in the debate, and EVALUATOR does not receive its summaries. Each round makes exactly four DeepSeek API calls, in this order: PROPOSER, CRITIC, EVALUATOR, PAPER_READER. arXiv query generation is local and does not make an LLM call.
+PROPOSER, CRITIC, and EVALUATOR receive the original input and available source context: the linked GitHub file and that round's arXiv results. In research mode, their roles focus on the research proposal. In knowledge mode, they focus on conceptual accuracy and the evolving note; they do not ask for experiments, novelty, or project feasibility. PAPER_READER receives the current proposal or note, CRITIC's feedback, arXiv search results, and retrieved paper text. Its summaries are passed to PROPOSER and CRITIC starting in the next round; PAPER_READER does not take part in the debate, and EVALUATOR does not receive its summaries. Each round makes exactly four DeepSeek API calls, in this order: PROPOSER, CRITIC, EVALUATOR, PAPER_READER. arXiv query generation is local and does not make an LLM call.
+
+Knowledge mode produces versioned notes with a central question, current understanding, key claims and their sources, important distinctions, uncertainties, questions, and a changelog. The final note is saved as `final_note.json`; research mode continues to save `final.json`.
 
 The debate's arXiv search currently keeps papers categorized under `cs.CV`, `cs.LG`, `cs.AI`, or `cs.CL`, with up to two papers per query from a candidate pool of 15. PAPER_READER performs a separate search based on the proposal and CRITIC's feedback, then retrieves at most one candidate's full text. It prefers arXiv HTML and falls back to the TeX source, including referenced `\input` and `\include` files when available. The text passed to PAPER_READER is capped at 24,000 characters; truncation and retrieval failures are reported in its input and round log. Other research fields may need changes to the category filter in `tools.py`.
 
@@ -103,9 +106,13 @@ Then run:
 python main.py
 ```
 
-For example, enter:
+For a research debate, enter:
 
 > I want to study how local label entropy changes across layers of a pretrained ResNet-18 using a small cat/dog dataset. Help me design a feasible pilot with appropriate controls.
+
+For a knowledge debate, choose option 2 and enter a topic or question, for example:
+
+> Explain the difference between correlation and causation, when confounding occurs, and how randomized experiments address it.
 
 After each round:
 
@@ -113,9 +120,9 @@ After each round:
 | --- | --- |
 | Enter | Continue to the next round. |
 | Any other text | Use it as an instruction for the next round. |
-| `ok`, `done`, `accept`, `stop`, `q`, or `quit` | Save the current revised proposal as `final.json` and stop. |
+| `ok`, `done`, `accept`, `stop`, `q`, or `quit` | Save the current artifact (`final.json` in research mode or `final_note.json` in knowledge mode) and stop. |
 
-End-of-input also finalizes the current revision. The default limit is five rounds, set by `run(idea, max_rounds=5)` in `main.py`.
+End-of-input also finalizes the current revision. The default limit is five rounds, set by `run(idea, max_rounds=5, mode=...)` in `main.py`. The interactive entry point defaults to research mode when you press Enter at the mode prompt; choose option 2 for knowledge mode.
 
 ## Reviewing a GitHub file
 
@@ -145,15 +152,15 @@ The client uses `DEEPSEEK_API_KEY` from the environment or `.env`, with `https:/
 
 ## Output and included examples
 
-Each run creates a `debate_YYYYMMDD_HHMMSS/` directory in the working directory. Each `round_XX.json` records:
+Each run creates a `debate_{mode}_YYYYMMDD_HHMMSS/` directory in the working directory. Each `round_XX.json` records:
 
-- Proposals before and after revision, plus the critic's feedback.
+- Proposals or knowledge notes before and after revision, plus the critic's feedback.
 - Proposer defense rate and critic strictness used and recommended for the next round.
 - Evaluator scores and reasoning.
 - The PAPER_READER summary prepared for the next round, the summary used in this round, search keywords, and full-text retrieval status.
 - Retrieved arXiv context, GitHub context length, and the feedback used for that round.
 
-`final.json` is written when the user explicitly finalizes or input ends. Reaching the round limit returns the last proposal without writing `final.json`; the last `round_XX.json` still contains that proposal in `after`.
+The final artifact is written when the user explicitly finalizes or input ends. Reaching the round limit returns the last proposal or note without writing a separate final file; the last `round_XX.json` still contains it in `after` (research mode) or `note_after` (knowledge mode).
 
 The two supplied example logs are preserved in their original directories:
 
@@ -166,7 +173,7 @@ Both are single-round records, not complete finalized sessions. New run director
 
 | File | Responsibility |
 | --- | --- |
-| `main.py` | Interactive entry point and round limit. |
+| `main.py` | Interactive mode selection, entry point, and round limit. |
 | `orchestrator.py` | Four-agent round loop, evaluator validation, paper retrieval, user feedback, and log persistence. |
 | `agents.py` | Role input builders, behavior instructions, and terminal rendering. |
 | `prompts.py` | Four role prompts, reference instructions, and JSON response schemas. |
